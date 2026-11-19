@@ -20,25 +20,23 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertAll;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 public class MoviesApiTest {
-    private static final String BASE = "http://localhost:8080";
-    private static MoviesServer server;
-    private static HttpClient client;
-    private static MoviesStore store;
-    private static JsonFormatter formatter;
+    private String base;
+    private MoviesServer server;
+    private HttpClient client;
+    private MoviesStore store;
+    private JsonFormatter formatter;
 
     @BeforeEach
     void beforeEach() {
         store = new MoviesStore();
         formatter = new JsonFormatter();
-        server = new MoviesServer(8080, store, formatter);
+        server = new MoviesServer(0, store, formatter);
 
         server.start();
+        base = "http://localhost:" + server.getPort();
 
         client = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(2))
@@ -47,13 +45,15 @@ public class MoviesApiTest {
 
     @AfterEach
     void tearDown() {
-        server.stop();
+        if (server != null) {
+            server.stop();
+        }
     }
 
     @Test
     void getMovies_whenEmpty_returnsEmptyArray() throws Exception {
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies"))
+                .uri(URI.create(base + "/movies"))
                 .GET()
                 .build();
 
@@ -68,8 +68,7 @@ public class MoviesApiTest {
                 "Content-Type должен содержать формат данных и кодировку");
 
         String body = response.body();
-        assertTrue(body.startsWith("[") && body.endsWith("]"),
-                "Ожидается JSON-массив");
+        assertEquals(List.of(), formatter.fromJsonList(body));
     }
 
     @Test
@@ -78,7 +77,7 @@ public class MoviesApiTest {
         Movie testMovie2 = createTestMovie("The Shawshank Redemption", (short) 1994);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies"))
+                .uri(URI.create(base + "/movies"))
                 .GET()
                 .build();
 
@@ -95,9 +94,7 @@ public class MoviesApiTest {
         List<Movie> movies = formatter.fromJsonList(response.body());
 
         assertEquals(2, movies.size(), "Размер массива объектов не совпадает с целевым");
-        assertEquals(testMovie.id(), movies.getFirst().id());
-        assertEquals(testMovie.name(), movies.getFirst().name());
-        assertEquals(testMovie.year(), movies.getFirst().year());
+        assertTrue(movies.containsAll(List.of(testMovie, testMovie2)));
     }
 
     @Test
@@ -105,7 +102,7 @@ public class MoviesApiTest {
         Movie testMovie = createTestMovie("Nosferatu", (short) 1922);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies/" + testMovie.id()))
+                .uri(URI.create(base + "/movies/" + testMovie.id()))
                 .GET()
                 .build();
 
@@ -123,7 +120,7 @@ public class MoviesApiTest {
                 ),
                 () -> assertTrue(receivedMovie.id() > 0,
                         "В ответе отсутвует id"),
-                () -> assertEquals(testMovie.name(), receivedMovie.name(),
+                () -> assertEquals(testMovie.title(), receivedMovie.title(),
                         "Название фильма в ответе не совпадает с отправленным"),
                 () -> assertEquals(testMovie.year(), receivedMovie.year(),
                         "Год фильма в ответе не совпадает с отправленным"),
@@ -135,7 +132,7 @@ public class MoviesApiTest {
     @Test
     void getMovie_byId_notFound_return404() throws Exception {
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies/9999"))
+                .uri(URI.create(base + "/movies/9999"))
                 .GET()
                 .build();
 
@@ -161,7 +158,7 @@ public class MoviesApiTest {
     @Test
     void getMovie_byId_whenNotNum_return400() throws Exception {
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies/qwerty"))
+                .uri(URI.create(base + "/movies/qwerty"))
                 .GET()
                 .build();
 
@@ -186,12 +183,12 @@ public class MoviesApiTest {
 
     @Test
     void getMovie_byYear_returnsMovies() throws Exception {
-        Movie ff = createTestMovie("The Fast and the Furious", (short) 2001);
+        createTestMovie("The Fast and the Furious", (short) 2001);
         Movie parasites = createTestMovie("Parasite", (short) 2019);
         Movie avengers = createTestMovie("Avengers: Endgame", (short) 2019);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies" + "?year=" + parasites.year()))
+                .uri(URI.create(base + "/movies" + "?year=" + parasites.year()))
                 .GET()
                 .build();
 
@@ -207,18 +204,19 @@ public class MoviesApiTest {
                         response.headers().firstValue("Content-Type").orElse(""),
                         "Content-Type должен содержать формат данных и кодировку"
                 ),
-                () -> assertEquals(2, movies.size(), "Размер массива объектов не совпадает с целевым")
+                () -> assertEquals(2, movies.size(), "Размер массива объектов не совпадает с целевым"),
+                () -> assertTrue(movies.containsAll(List.of(parasites, avengers)))
         );
     }
 
     @Test
     void getMovie_byYear_notFound_returnsEmptyArray() throws Exception {
-        Movie ff = createTestMovie("The Fast and the Furious", (short) 2001);
-        Movie parasites = createTestMovie("Parasite", (short) 2019);
-        Movie avengers = createTestMovie("Avengers: Endgame", (short) 2019);
+        createTestMovie("The Fast and the Furious", (short) 2001);
+        createTestMovie("Parasite", (short) 2019);
+        createTestMovie("Avengers: Endgame", (short) 2019);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies" + "?year=" + 1899))
+                .uri(URI.create(base + "/movies" + "?year=" + 1899))
                 .GET()
                 .build();
 
@@ -233,14 +231,13 @@ public class MoviesApiTest {
                 "Content-Type должен содержать формат данных и кодировку");
 
         String body = response.body();
-        assertTrue(body.startsWith("[") && body.endsWith("]"),
-                "Ожидается JSON-массив");
+        assertEquals(List.of(), formatter.fromJsonList(body));
     }
 
     @Test
     void getMovie_byYear_whenNotNum_return400() throws Exception {
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies" + "?year=" + "abc"))
+                .uri(URI.create(base + "/movies" + "?year=" + "abc"))
                 .GET()
                 .build();
 
@@ -269,7 +266,7 @@ public class MoviesApiTest {
         CreateMovieRequest request = createTestMovieRequest("Titanic", (short) 1997);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies"))
+                .uri(URI.create(base + "/movies"))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(formatter.toJson(request)))
                 .build();
@@ -288,7 +285,7 @@ public class MoviesApiTest {
                 ),
                 () -> assertTrue(createdMovie.id() > 0,
                         "В ответе отсутвует id"),
-                () -> assertEquals(request.name(), createdMovie.name(),
+                () -> assertEquals(request.title(), createdMovie.title(),
                         "Название фильма в ответе не совпадает с отправленным"),
                 () -> assertEquals(request.year(), createdMovie.year(),
                         "Год фильма в ответе не совпадает с отправленным"),
@@ -302,7 +299,7 @@ public class MoviesApiTest {
         CreateMovieRequest request = createTestMovieRequest(" ", (short) 1999);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies"))
+                .uri(URI.create(base + "/movies"))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(formatter.toJson(request)))
                 .build();
@@ -334,7 +331,7 @@ public class MoviesApiTest {
                 (short) 1999);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies"))
+                .uri(URI.create(base + "/movies"))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(formatter.toJson(request)))
                 .build();
@@ -365,7 +362,7 @@ public class MoviesApiTest {
         CreateMovieRequest request = createTestMovieRequest("Test", (short) 2099);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies"))
+                .uri(URI.create(base + "/movies"))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(formatter.toJson(request)))
                 .build();
@@ -396,7 +393,7 @@ public class MoviesApiTest {
         CreateMovieRequest request = createTestMovieRequest("Titanic", (short) 1997);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies"))
+                .uri(URI.create(base + "/movies"))
                 .header("Content-Type", "text/html")
                 .POST(HttpRequest.BodyPublishers.ofString(formatter.toJson(request)))
                 .build();
@@ -429,7 +426,7 @@ public class MoviesApiTest {
                 """;
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies"))
+                .uri(URI.create(base + "/movies"))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(invalidJson))
                 .build();
@@ -460,7 +457,7 @@ public class MoviesApiTest {
         Movie testMovie = createTestMovie("Nosferatu", (short) 1922);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies/" + 1))
+                .uri(URI.create(base + "/movies/" + testMovie.id()))
                 .DELETE()
                 .build();
 
@@ -476,15 +473,16 @@ public class MoviesApiTest {
 
         String body = response.body();
         assertTrue(body.isEmpty(),
-                "Ожидается JSON-массив");
+                "Ответ 204 должен быть пустым");
+        assertNull(store.getById(testMovie.id()));
     }
 
     @Test
     void deleteMovie_byId_notFound_return404() throws Exception {
-        Movie testMovie = createTestMovie("Nosferatu", (short) 1922);
+        createTestMovie("Nosferatu", (short) 1922);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies/" + 999))
+                .uri(URI.create(base + "/movies/" + 999))
                 .DELETE()
                 .build();
 
@@ -509,10 +507,10 @@ public class MoviesApiTest {
 
     @Test
     void deleteMovie_byId_notNum_return400() throws Exception {
-        Movie testMovie = createTestMovie("Nosferatu", (short) 1922);
+        createTestMovie("Nosferatu", (short) 1922);
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
-                .uri(URI.create(BASE + "/movies/" + "abc"))
+                .uri(URI.create(base + "/movies/" + "abc"))
                 .DELETE()
                 .build();
 
@@ -535,12 +533,109 @@ public class MoviesApiTest {
         );
     }
 
-    private Movie createTestMovie(String name, short year) {
-        return store.add(name, year);
+    @Test
+    void postMovie_usesTitleInRequestAndResponse() throws Exception {
+        HttpResponse<String> response = send("POST", "/movies", "{\"title\":\"Титаник\",\"year\":1997}");
+        assertEquals(201, response.statusCode());
+        JsonObject movie = JsonParser.parseString(response.body()).getAsJsonObject();
+        assertEquals("Титаник", movie.get("title").getAsString());
+        assertFalse(movie.has("name"));
     }
 
-    private CreateMovieRequest createTestMovieRequest(String name, short year) {
-        return new CreateMovieRequest(name, year);
+    @Test
+    void unsupportedMethods_return405WithAllowHeader() throws Exception {
+        for (String method : List.of("PUT", "PATCH", "DELETE")) {
+            HttpResponse<String> response = send(method, "/movies", "");
+            assertEquals(405, response.statusCode());
+            assertEquals("GET, POST", response.headers().firstValue("Allow").orElse(""));
+            assertTrue(JsonParser.parseString(response.body()).getAsJsonObject().has("error"));
+        }
+        assertEquals(405, send("POST", "/movies/1", "{}").statusCode());
+    }
+
+    @Test
+    void unknownPaths_return404AndDoNotCreateMovies() throws Exception {
+        for (String path : List.of("/moviesXYZ", "/movies/", "/movies/1/extra", "/unknown")) {
+            assertEquals(404, send("POST", path, "{\"title\":\"Test\",\"year\":1997}").statusCode());
+            assertEquals(404, send("GET", path + "?year=1997", "").statusCode());
+        }
+        assertTrue(store.getAll().isEmpty());
+    }
+
+    @Test
+    void invalidQuery_returns400() throws Exception {
+        for (String query : List.of("foo=1", "year=", "year=abc", "year=1997&year=1998",
+                "year=1997&foo=1", "year=1887", "year=" + (java.time.Year.now().getValue() + 2))) {
+            assertEquals(400, send("GET", "/movies?" + query, "").statusCode(), query);
+        }
+        Movie movie = store.add("Test", 1997);
+        assertEquals(400, send("GET", "/movies/" + movie.id() + "?year=1997", "").statusCode());
+        assertEquals(200, send("GET", "/movies?%79ear=1997", "").statusCode());
+    }
+
+    @Test
+    void invalidJsonAndFieldTypes_return400() throws Exception {
+        for (String body : List.of("", "null", "[]", "{title:'Test',year:1997}",
+                "{\"title\":42,\"year\":1997}", "{\"title\":true,\"year\":1997}",
+                "{\"title\":\"Test\",\"year\":\"1997\"}", "{\"title\":\"Test\",\"year\":1997.5}",
+                "{\"title\":\"Test\",\"year\":1997} {}", "{\"title\":\"A\",\"title\":\"B\",\"year\":1997}",
+                "{\"title\":\"Test\",\"year\":1997,}", "{/*comment*/\"title\":\"Test\",\"year\":1997}")) {
+            assertEquals(400, send("POST", "/movies", body).statusCode(), body);
+        }
+        assertTrue(store.getAll().isEmpty());
+    }
+
+    @Test
+    void missingFieldsAndNullFields_return422() throws Exception {
+        for (String body : List.of("{}", "{\"title\":\"Test\"}", "{\"year\":1997}",
+                "{\"title\":null,\"year\":null}", "{\"name\":\"Test\",\"year\":1997}")) {
+            assertEquals(422, send("POST", "/movies", body).statusCode(), body);
+        }
+        assertTrue(store.getAll().isEmpty());
+    }
+
+    @Test
+    void titleAndYearBoundaries_areValidated() throws Exception {
+        int maximumYear = java.time.Year.now().getValue() + 1;
+        assertEquals(201, send("POST", "/movies",
+                formatter.toJson(new CreateMovieRequest("A".repeat(100), 1888))).statusCode());
+        assertEquals(201, send("POST", "/movies",
+                formatter.toJson(new CreateMovieRequest("Test", maximumYear))).statusCode());
+        assertEquals(422, send("POST", "/movies",
+                formatter.toJson(new CreateMovieRequest("A".repeat(101), 1888))).statusCode());
+        for (int year : List.of(1887, maximumYear + 1, 67533)) {
+            HttpResponse<String> response = send("POST", "/movies",
+                    formatter.toJson(new CreateMovieRequest("Test", year)));
+            assertEquals(422, response.statusCode());
+            assertTrue(formatter.fromJsonError(response.body()).details()
+                    .contains("год должен быть между 1888 и " + maximumYear));
+        }
+    }
+
+    @Test
+    void deleteMovie_isVisibleThroughApi() throws Exception {
+        Movie movie = store.add("Test", 1997);
+        assertEquals(200, send("GET", "/movies/" + movie.id(), "").statusCode());
+        assertEquals(204, send("DELETE", "/movies/" + movie.id(), "").statusCode());
+        assertEquals(404, send("GET", "/movies/" + movie.id(), "").statusCode());
+        assertEquals(404, send("DELETE", "/movies/" + movie.id(), "").statusCode());
+    }
+
+    private HttpResponse<String> send(String method, String path, String body) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(base + path))
+                .timeout(Duration.ofSeconds(5))
+                .header("Content-Type", "application/json; charset=UTF-8")
+                .method(method, HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                .build();
+        return client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+    }
+
+    private Movie createTestMovie(String title, int year) {
+        return store.add(title, year);
+    }
+
+    private CreateMovieRequest createTestMovieRequest(String title, int year) {
+        return new CreateMovieRequest(title, year);
     }
 
 }

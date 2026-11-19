@@ -13,13 +13,17 @@ public class MoviesServer {
 
     public MoviesServer(int port, MoviesStore store, JsonFormatter formatter) {
         try {
-            this.server = HttpServer.create(new InetSocketAddress(port), 0);
+            this.server = HttpServer.create(new InetSocketAddress("localhost", port), 0);
 
-            server.createContext("/movies", new MoviesHandler(store, formatter));
+            server.createContext("/", new MoviesHandler(store, formatter));
 
         } catch (IOException e) {
             throw new RuntimeException("Не удалось создать HTTP-сервер", e);
         }
+    }
+
+    public int getPort() {
+        return server.getAddress().getPort();
     }
 
     public void start() {

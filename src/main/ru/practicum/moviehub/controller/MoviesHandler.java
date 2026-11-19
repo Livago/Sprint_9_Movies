@@ -9,14 +9,13 @@ import ru.practicum.moviehub.model.Movie;
 import ru.practicum.moviehub.storage.MoviesStore;
 
 import java.io.IOException;
-import java.net.URI;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Year;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MoviesHandler extends BaseHttpHandler {
-
     private final MoviesStore store;
     private final JsonFormatter formatter;
 
@@ -27,183 +26,127 @@ public class MoviesHandler extends BaseHttpHandler {
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
-        String method = exchange.getRequestMethod();
-
-        switch (method) {
-            case "GET" -> handleGetRequest(exchange);
-            case "POST" -> handlePostRequest(exchange);
-            case "DELETE" -> handleDeleteRequest(exchange);
-            default -> sendJson(exchange, 405, "{\"error\":\"Method not allowed\"}");
-        }
-    }
-
-    private void handleGetRequest(HttpExchange exchange) throws IOException {
-        URI requestURI = exchange.getRequestURI();
-        String path = requestURI.getPath();
-        String query = requestURI.getQuery();
-
-        if (query != null && query.startsWith("year=")) {
-            try {
-                short year = Short.parseShort(query.substring(5));
-
-                List<Movie> movies = store.getByYear(year);
-
-                sendJson(exchange, 200, formatter.toJsonList(movies));
-            } catch (NumberFormatException e) {
-                sendJson(exchange, 400, formatter.toJson(
-                        new ErrorResponse(
-                                "Bad Request",
-                                List.of("Некорректный год")
-                        )
-                ));
+        try (exchange) {
+            String path = exchange.getRequestURI().getPath();
+            String method = exchange.getRequestMethod();
+            if (path.equals("/movies")) {
+                switch (method) {
+                    case "GET" -> handleGetCollection(exchange);
+                    case "POST" -> handlePostRequest(exchange);
+                    default -> sendMethodNotAllowed(exchange, "GET, POST");
+                }
+                return;
             }
-
-            return;
-        }
-
-        if (path.equals("/movies") && query == null) {
-            List<Movie> movies = store.getAll();
-            sendJson(exchange, 200, formatter.toJsonList(movies));
-            return;
-        }
-
-        if (path.startsWith("/movies/")) {
-            String idString = path.substring("/movies/".length());
-
-            if (idString.isEmpty() || idString.contains("/")) {
+            if (!path.startsWith("/movies/") || path.substring(8).isEmpty()
+                    || path.substring(8).contains("/")) {
                 sendNotFound(exchange);
                 return;
             }
-
+            if (!method.equals("GET") && !method.equals("DELETE")) {
+                sendMethodNotAllowed(exchange, "GET, DELETE");
+                return;
+            }
+            int id;
             try {
-                Movie movie = store.getById(Integer.parseInt(idString));
-
+                id = Integer.parseInt(path.substring(8));
+            } catch (NumberFormatException e) {
+                sendError(exchange, 400, "Bad Request", "Некорректный ID");
+                return;
+            }
+            if (exchange.getRequestURI().getRawQuery() != null) {
+                sendError(exchange, 400, "Bad Request", "Параметры запроса допустимы только для GET /movies");
+                return;
+            }
+            if (method.equals("DELETE")) {
+                if (store.deleteById(id) == null) {
+                    sendNotFound(exchange);
+                } else {
+                    sendNoContent(exchange);
+                }
+            } else {
+                Movie movie = store.getById(id);
                 if (movie == null) {
                     sendNotFound(exchange);
-                    return;
+                } else {
+                    sendJson(exchange, 200, formatter.toJson(movie));
                 }
-                sendJson(exchange, 200, formatter.toJson(movie));
-            } catch (NumberFormatException e) {
-                sendJson(exchange, 400, formatter.toJson(
-                        new ErrorResponse(
-                                "Bad Request",
-                                List.of("Некорректный ID")
-                        )
-                ));
             }
         }
+    }
 
-        sendNotFound(exchange);
+    private void handleGetCollection(HttpExchange exchange) throws IOException {
+        String query = exchange.getRequestURI().getRawQuery();
+        if (query == null) {
+            sendJson(exchange, 200, formatter.toJsonList(store.getAll()));
+            return;
+        }
+        int year;
+        try {
+            String[] parameters = query.split("&", -1);
+            String[] parameter = parameters[0].split("=", -1);
+            if (parameters.length != 1 || parameter.length != 2
+                    || !URLDecoder.decode(parameter[0], StandardCharsets.UTF_8).equals("year")) {
+                throw new IllegalArgumentException("Ожидается один параметр year");
+            }
+            year = Integer.parseInt(URLDecoder.decode(parameter[1], StandardCharsets.UTF_8));
+            if (year < 1888 || year > Year.now().getValue() + 1) {
+                throw new IllegalArgumentException("Год вне допустимого диапазона");
+            }
+        } catch (IllegalArgumentException e) {
+            sendError(exchange, 400, "Bad Request", "Некорректный год");
+            return;
+        }
+        sendJson(exchange, 200, formatter.toJsonList(store.getByYear(year)));
     }
 
     private void handlePostRequest(HttpExchange exchange) throws IOException {
-        // Проверяем Content-Type
-        String contentType = exchange.getRequestHeaders()
-                .getFirst("Content-Type");
-
+        if (exchange.getRequestURI().getRawQuery() != null) {
+            sendError(exchange, 400, "Bad Request", "POST /movies не поддерживает параметры запроса");
+            return;
+        }
+        String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
         if (contentType == null
-                || !contentType.split(";", 2)[0].trim()
-                        .equalsIgnoreCase("application/json")) {
-            sendJson(exchange, 415, formatter.toJson(
-                    new ErrorResponse(
-                            "Неподдерживаемый формат данных",
-                            List.of("Ожидается Content-Type: application/json")
-                    )
-            ));
+                || !contentType.split(";", 2)[0].trim().equalsIgnoreCase("application/json")) {
+            sendError(exchange, 415, "Неподдерживаемый формат данных",
+                    "Ожидается Content-Type: application/json");
             return;
         }
-
-        // Десериализуем JSON
         CreateMovieRequest request;
-
         try {
-            String body = new String(
-                    exchange.getRequestBody().readAllBytes(),
-                    StandardCharsets.UTF_8
-            );
-
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             request = formatter.fromJsonRequest(body);
-
         } catch (JsonParseException e) {
-            sendJson(exchange, 400, formatter.toJson(
-                    new ErrorResponse(
-                            "Некорректный JSON",
-                            List.of("Не удалось прочитать тело запроса")
-                    )
-            ));
+            sendError(exchange, 400, "Некорректный JSON", "Не удалось прочитать тело запроса");
             return;
         }
-
-        // Собираем ошибки валидации
         List<String> errors = new ArrayList<>();
-
-        if (request == null
-                || request.name() == null
-                || request.name().isBlank()) {
+        if (request.title() == null || request.title().isBlank()) {
             errors.add("название не должно быть пустым");
-        } else if (request.name().length() > 100) {
-            errors.add("название должно быть менее 100 символов");
+        } else if (request.title().length() > 100) {
+            errors.add("название должно быть не более 100 символов");
         }
-
-        if (request != null
-                && (request.year() < 1888 || request.year() > Year.now().getValue() + 1)) {
-            errors.add("год должен быть между 1888 и 2027");
+        int maximumYear = Year.now().getValue() + 1;
+        if (request.year() == null || request.year() < 1888 || request.year() > maximumYear) {
+            errors.add("год должен быть между 1888 и " + maximumYear);
         }
-
-        // Возвращаем все обнаруженные ошибки
         if (!errors.isEmpty()) {
-            sendJson(exchange, 422, formatter.toJson(
-                    new ErrorResponse("Ошибка валидации", errors)
-            ));
+            sendJson(exchange, 422, formatter.toJson(new ErrorResponse("Ошибка валидации", errors)));
             return;
         }
-
-        // Сохраняем фильм
-        Movie created = store.add(request.name(), request.year());
+        Movie created = store.add(request.title(), request.year());
         sendJson(exchange, 201, formatter.toJson(created));
     }
 
-    private void handleDeleteRequest(HttpExchange exchange) throws IOException {
-        URI requestURI = exchange.getRequestURI();
-
-        String path = requestURI.getPath();
-
-        if (path.startsWith("/movies/")) {
-            String idString = path.substring("/movies/".length());
-
-            if (idString.isEmpty() || idString.contains("/")) {
-                sendNotFound(exchange);
-                return;
-            }
-
-            try {
-                if (store.getById(Integer.parseInt(idString)) == null) {
-                    sendNotFound(exchange);
-                    return;
-                }
-
-                store.deleteById(Integer.parseInt(idString));
-                sendNoContent(exchange);
-                return;
-
-            } catch (NumberFormatException e) {
-                sendJson(exchange, 400, formatter.toJson(
-                        new ErrorResponse(
-                                "Bad Request",
-                                List.of("Некорректный ID")
-                        )
-                ));
-            }
-        }
-        sendNotFound(exchange);
+    private void sendMethodNotAllowed(HttpExchange exchange, String allowedMethods) throws IOException {
+        exchange.getResponseHeaders().set("Allow", allowedMethods);
+        sendError(exchange, 405, "Method not allowed", "Метод не поддерживается для этого ресурса");
     }
 
     private void sendNotFound(HttpExchange exchange) throws IOException {
-        sendJson(exchange, 404, formatter.toJson(
-                new ErrorResponse(
-                        "Not Found",
-                        List.of("Ресурс не найден")
-                )
-        ));
+        sendError(exchange, 404, "Not Found", "Ресурс не найден");
+    }
+
+    private void sendError(HttpExchange exchange, int status, String error, String detail) throws IOException {
+        sendJson(exchange, status, formatter.toJson(new ErrorResponse(error, List.of(detail))));
     }
 }
