@@ -26,24 +26,44 @@ public class MoviesHandler extends BaseHttpHandler {
     }
 
     @Override
-    public void handle(HttpExchange ex) throws IOException {
-        String method = ex.getRequestMethod();
+    public void handle(HttpExchange exchange) throws IOException {
+        String method = exchange.getRequestMethod();
 
-        switch(method) {
-            case "GET" -> handleGetRequest(ex);
-            case "POST" -> handlePostRequest(ex);
-            case "DELETE" -> handleDeleteRequest(ex);
-            default -> sendJson(ex, 405, "{\"error\":\"Method not allowed\"}");
+        switch (method) {
+            case "GET" -> handleGetRequest(exchange);
+            case "POST" -> handlePostRequest(exchange);
+            case "DELETE" -> handleDeleteRequest(exchange);
+            default -> sendJson(exchange, 405, "{\"error\":\"Method not allowed\"}");
         }
     }
 
-    private void handleGetRequest(HttpExchange ex) throws IOException {
-        URI requestURI = ex.getRequestURI();
+    private void handleGetRequest(HttpExchange exchange) throws IOException {
+        URI requestURI = exchange.getRequestURI();
         String path = requestURI.getPath();
+        String query = requestURI.getQuery();
 
-        if (path.equals("/movies")) {
+        if (query != null && query.startsWith("year=")) {
+            try {
+                short year = Short.parseShort(query.substring(5));
+
+                List<Movie> movies = store.getByYear(year);
+
+                sendJson(exchange, 200, formatter.toJsonList(movies));
+            } catch (NumberFormatException e) {
+                sendJson(exchange, 400, formatter.toJson(
+                        new ErrorResponse(
+                                "Bad Request",
+                                List.of("Некорректный год")
+                        )
+                ));
+            }
+
+            return;
+        }
+
+        if (path.equals("/movies") && query == null) {
             List<Movie> movies = store.getAll();
-            sendJson(ex, 200, formatter.toJsonList(movies));
+            sendJson(exchange, 200, formatter.toJsonList(movies));
             return;
         }
 
@@ -51,7 +71,7 @@ public class MoviesHandler extends BaseHttpHandler {
             String idString = path.substring("/movies/".length());
 
             if (idString.isEmpty() || idString.contains("/")) {
-                sendNotFound(ex);
+                sendNotFound(exchange);
                 return;
             }
 
@@ -59,12 +79,12 @@ public class MoviesHandler extends BaseHttpHandler {
                 Movie movie = store.getById(Integer.parseInt(idString));
 
                 if (movie == null) {
-                    sendNotFound(ex);
+                    sendNotFound(exchange);
                     return;
                 }
-                sendJson(ex, 200, formatter.toJson(movie));
+                sendJson(exchange, 200, formatter.toJson(movie));
             } catch (NumberFormatException e) {
-                sendJson(ex, 400, formatter.toJson(
+                sendJson(exchange, 400, formatter.toJson(
                         new ErrorResponse(
                                 "Bad Request",
                                 List.of("Некорректный ID")
@@ -72,20 +92,19 @@ public class MoviesHandler extends BaseHttpHandler {
                 ));
             }
         }
-        sendNotFound(ex);
+
+        sendNotFound(exchange);
     }
 
-    private void handlePostRequest(HttpExchange ex) throws IOException {
-
+    private void handlePostRequest(HttpExchange exchange) throws IOException {
         // Проверяем Content-Type
-        String contentType = ex.getRequestHeaders()
+        String contentType = exchange.getRequestHeaders()
                 .getFirst("Content-Type");
 
-        if (contentType == null ||
-                !contentType.split(";", 2)[0].trim()
+        if (contentType == null
+                || !contentType.split(";", 2)[0].trim()
                         .equalsIgnoreCase("application/json")) {
-
-            sendJson(ex, 415, formatter.toJson(
+            sendJson(exchange, 415, formatter.toJson(
                     new ErrorResponse(
                             "Неподдерживаемый формат данных",
                             List.of("Ожидается Content-Type: application/json")
@@ -99,14 +118,14 @@ public class MoviesHandler extends BaseHttpHandler {
 
         try {
             String body = new String(
-                    ex.getRequestBody().readAllBytes(),
+                    exchange.getRequestBody().readAllBytes(),
                     StandardCharsets.UTF_8
             );
 
             request = formatter.fromJsonRequest(body);
 
         } catch (JsonParseException e) {
-            sendJson(ex, 400, formatter.toJson(
+            sendJson(exchange, 400, formatter.toJson(
                     new ErrorResponse(
                             "Некорректный JSON",
                             List.of("Не удалось прочитать тело запроса")
@@ -118,20 +137,22 @@ public class MoviesHandler extends BaseHttpHandler {
         // Собираем ошибки валидации
         List<String> errors = new ArrayList<>();
 
-        if (request == null ||
-                request.name() == null ||
-                request.name().isBlank()) {
+        if (request == null
+                || request.name() == null
+                || request.name().isBlank()) {
             errors.add("название не должно быть пустым");
+        } else if (request.name().length() > 100) {
+            errors.add("название должно быть менее 100 символов");
         }
 
-        if (request != null &&
-                (request.year() < 1888 || request.year() > Year.now().getValue() + 1 )) {
+        if (request != null
+                && (request.year() < 1888 || request.year() > Year.now().getValue() + 1)) {
             errors.add("год должен быть между 1888 и 2027");
         }
 
         // Возвращаем все обнаруженные ошибки
         if (!errors.isEmpty()) {
-            sendJson(ex, 422, formatter.toJson(
+            sendJson(exchange, 422, formatter.toJson(
                     new ErrorResponse("Ошибка валидации", errors)
             ));
             return;
@@ -139,21 +160,46 @@ public class MoviesHandler extends BaseHttpHandler {
 
         // Сохраняем фильм
         Movie created = store.add(request.name(), request.year());
-        sendJson(ex, 201, formatter.toJson(created));
+        sendJson(exchange, 201, formatter.toJson(created));
     }
 
-    private void handleDeleteRequest(HttpExchange ex) throws IOException {
-        String path = ex.getRequestURI().getPath();
+    private void handleDeleteRequest(HttpExchange exchange) throws IOException {
+        URI requestURI = exchange.getRequestURI();
 
-        String[] parts = path.split("/");
-        String id = parts[2];
+        String path = requestURI.getPath();
 
-        System.out.println("Удаляем заметку с ID: " + id);
-        sendNoContent(ex);
+        if (path.startsWith("/movies/")) {
+            String idString = path.substring("/movies/".length());
+
+            if (idString.isEmpty() || idString.contains("/")) {
+                sendNotFound(exchange);
+                return;
+            }
+
+            try {
+                if (store.getById(Integer.parseInt(idString)) == null) {
+                    sendNotFound(exchange);
+                    return;
+                }
+
+                store.deleteById(Integer.parseInt(idString));
+                sendNoContent(exchange);
+                return;
+
+            } catch (NumberFormatException e) {
+                sendJson(exchange, 400, formatter.toJson(
+                        new ErrorResponse(
+                                "Bad Request",
+                                List.of("Некорректный ID")
+                        )
+                ));
+            }
+        }
+        sendNotFound(exchange);
     }
 
-    private void sendNotFound(HttpExchange ex) throws IOException {
-        sendJson(ex, 404, formatter.toJson(
+    private void sendNotFound(HttpExchange exchange) throws IOException {
+        sendJson(exchange, 404, formatter.toJson(
                 new ErrorResponse(
                         "Not Found",
                         List.of("Ресурс не найден")

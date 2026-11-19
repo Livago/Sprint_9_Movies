@@ -8,8 +8,6 @@ import ru.practicum.moviehub.model.Movie;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
-
 
 public class JsonFormatter {
 
@@ -48,5 +46,9 @@ public class JsonFormatter {
 
     public ErrorResponse fromJsonError(String json) {
         return gson.fromJson(json, ErrorResponse.class);
+    }
+
+    public String toJson(String invalidJson) {
+        return null;
     }
 }

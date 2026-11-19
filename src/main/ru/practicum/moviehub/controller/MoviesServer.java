@@ -15,7 +15,6 @@ public class MoviesServer {
         try {
             this.server = HttpServer.create(new InetSocketAddress(port), 0);
 
-            // Добавьте контекст для /movies и укажите созданный хендлер
             server.createContext("/movies", new MoviesHandler(store, formatter));
 
         } catch (IOException e) {
@@ -24,13 +23,11 @@ public class MoviesServer {
     }
 
     public void start() {
-        // запустите сервер
         server.start();
         System.out.println("Сервер запущен");
     }
 
     public void stop() {
-        // остановите сервер
         server.stop(0);
         System.out.println("Сервер остановлен");
     }
