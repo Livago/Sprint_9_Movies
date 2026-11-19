@@ -421,9 +421,7 @@ public class MoviesApiTest {
 
     @Test
     void postMovie_whenInvalidJson_returns400() throws Exception {
-        String invalidJson = """
-                {"name": "Titanic", "year": }
-                """;
+        String invalidJson = "{\"title\": \"Titanic\", \"year\": }";
 
         HttpRequest httpRequest = HttpRequest.newBuilder()
                 .uri(URI.create(base + "/movies"))
